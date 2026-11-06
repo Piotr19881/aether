@@ -2,10 +2,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import unittest
 import uuid
 
-from src.api import CompilationError, emit_c99, run_source
+from src.api import CompilationError, build_object, emit_c99, run_source
+from src.build import C99BuildError, C99ToolchainError
+from src.build import compile_c99_object
 
 
 _STRICT_C99_FLAGS = ("-std=c99", "-pedantic", "-Wall", "-Wextra", "-Werror")
@@ -113,7 +116,47 @@ class C99BackendTests(unittest.TestCase):
             timeout=30,
         )
 
-    def test_emits_deterministic_scalar_c99_with_checked_integer_arithmetic(self) -> None:
+    def test_build_object_writes_a_compiled_object_without_linking(self) -> None:
+        compiler = self.compiler()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_path = (
+                Path(temporary_directory)
+                / "artifacts with spaces"
+                / "module.o"
+            )
+            actual_path = build_object(
+                "fn add(left: i32, right: i32) -> i32 { return left + right; }\n",
+                output_path,
+                compiler=compiler,
+            )
+
+            self.assertEqual(actual_path, output_path.resolve())
+            self.assertTrue(actual_path.is_file())
+            self.assertGreater(actual_path.stat().st_size, 0)
+
+    def test_build_object_preserves_artifact_on_compiler_failure(self) -> None:
+        compiler = self.compiler()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_path = Path(temporary_directory) / "existing.o"
+            output_path.write_bytes(b"previous object")
+            with self.assertRaises(C99BuildError):
+                compile_c99_object(
+                    "this is not valid C;\n",
+                    output_path,
+                    compiler=compiler,
+                )
+            self.assertEqual(output_path.read_bytes(), b"previous object")
+
+    def test_build_object_reports_missing_compiler(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with self.assertRaises(C99ToolchainError):
+                compile_c99_object(
+                    "int value(void) { return 1; }\n",
+                    Path(temporary_directory) / "module.o",
+                    compiler=("aether-missing-c-compiler",),
+                )
+
+    def test_emits_deterministic_c99_with_checked_integer_arithmetic(self) -> None:
         source = (
             "fn add(left: i32, right: i32) -> i32 { return left + right; }\n"
             "fn twice(value: i32) -> i32 { return add(value, value); }\n"

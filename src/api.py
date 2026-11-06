@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+import os
+from pathlib import Path
+from typing import Mapping, Sequence
 
+from src.build import compile_c99_object
 from src.c99 import C99LoweringError, emit_c99_module
 from src.frontend import Diagnostic, SourceSpan, parse_source
 from src.interpreter import (
@@ -59,6 +62,25 @@ def emit_c99(source: str) -> str:
         return emit_c99_module(module)
     except C99LoweringError as error:
         raise CompilationError(error.diagnostics) from error
+
+
+def build_object(
+    source: str,
+    output_path: str | os.PathLike[str],
+    *,
+    compiler: str | os.PathLike[str] | Sequence[str] | None = None,
+) -> Path:
+    """Compile supported Aether source to a host C99 object file.
+
+    This invokes a C compiler with strict C99 flags but does not link an
+    executable or load any native libraries.
+    """
+    generated = emit_c99(source)
+    return compile_c99_object(
+        generated,
+        output_path,
+        compiler=compiler,
+    )
 
 
 def run_source(

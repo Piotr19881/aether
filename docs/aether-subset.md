@@ -226,6 +226,19 @@ subcommand) is installed. CI sets
 `AETHER_REQUIRE_C99_COMPILER=1`, making a missing compiler a test failure
 instead of a skip.
 
+## Host C99 object build
+
+`build_object(source, output_path, compiler=None)` in `src.api` runs the host
+C compiler on the generated translation unit and writes an object file. The
+default compiler search order is `cc`, `gcc`, `clang`, then `zig cc`; callers
+may select a compiler explicitly, including a command sequence such as
+`("zig", "cc")`. Compiler arguments are passed without a shell. The driver
+uses strict C99 warnings-as-errors and compile-only mode, captures diagnostics,
+and replaces the requested output atomically only after successful compilation.
+It does not link an executable, select a cross-compilation target, load FFI
+libraries, or execute the result. The host compiler and its target ABI define
+the object format.
+
 ## Result handling v0.2
 
 `Result<T, E>` has exactly two variants: `Ok(T)` and `Err(E)`. A `match`

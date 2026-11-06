@@ -114,6 +114,7 @@ supported ABI types and current limitations are documented in
 
 The experimental Safe-C99 backend is available as `emit_c99(source)` from
 `src.api`. It emits deterministic C99 for a checked scalar subset and rejects
-unsupported features with diagnostics; it does not run a C compiler or linker.
-See `docs/aether-subset.md` for the supported operations and arithmetic
-failure behavior.
+unsupported features with diagnostics. `build_object(source, output_path)`
+compiles that subset to a host object file using a C99 compiler; it does not
+link or execute the result. See `docs/aether-subset.md` for the supported
+operations and arithmetic failure behavior.
