@@ -82,8 +82,14 @@ def _has_unit(type_: AetherType) -> bool:
 
 
 class _C99Emitter:
-    def __init__(self, module: IRModule) -> None:
+    def __init__(
+        self,
+        module: IRModule,
+        *,
+        include_entry_point: bool = False,
+    ) -> None:
         self.module = module
+        self.include_entry_point = include_entry_point
         self.functions = {function.name: function for function in module.functions}
         self.diagnostics: list[Diagnostic] = []
         self.helpers: set[tuple[str, str]] = set()
@@ -340,6 +346,25 @@ class _C99Emitter:
             )
 
     def validate(self) -> None:
+        if self.include_entry_point:
+            entry = self.functions.get("main")
+            if entry is None:
+                span = (
+                    self.module.functions[0].span
+                    if self.module.functions
+                    else SourceSpan(0, 0, 1, 1)
+                )
+                self.error(
+                    "E_C99_ENTRY_POINT",
+                    "Executable output requires fn main() -> i32 or fn main() -> void",
+                    span,
+                )
+            elif entry.parameters or entry.return_type.name not in {"i32", "void"}:
+                self.error(
+                    "E_C99_ENTRY_POINT",
+                    "Entry function main must take no parameters and return i32 or void",
+                    entry.span,
+                )
         for declaration in self.module.types:
             self.error(
                 "E_C99_TYPE_DECL",
@@ -540,6 +565,19 @@ class _C99Emitter:
         for function in self.module.functions:
             output.extend(self._emit_function(function))
             output.append("")
+        if self.include_entry_point:
+            output.extend(
+                [
+                    "int main(void) {",
+                    "    " + (
+                        "return aether_fn_6d61696e();"
+                        if self.functions["main"].return_type.name == "i32"
+                        else "aether_fn_6d61696e();\n    return 0;"
+                    ),
+                    "}",
+                    "",
+                ]
+            )
         return "\n".join(output).rstrip() + "\n"
 
     def _function_signature(self, function: IRFunction) -> str:
@@ -691,6 +729,13 @@ class _C99Emitter:
         return lines
 
 
-def emit_c99_module(module: IRModule) -> str:
+def emit_c99_module(
+    module: IRModule,
+    *,
+    include_entry_point: bool = False,
+) -> str:
     """Emit deterministic C99 for the supported checked-scalar subset."""
-    return _C99Emitter(module).emit()
+    return _C99Emitter(
+        module,
+        include_entry_point=include_entry_point,
+    ).emit()

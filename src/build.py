@@ -12,6 +12,7 @@ from typing import Sequence
 
 
 _C99_FLAGS = ("-std=c99", "-pedantic", "-Wall", "-Wextra", "-Werror", "-c")
+_C99_LINK_FLAGS = ("-std=c99", "-pedantic", "-Wall", "-Wextra", "-Werror")
 _COMPILER_TIMEOUT_SECONDS = 120
 
 
@@ -139,4 +140,78 @@ def compile_c99_object(
                 "C99 compiler reported success but did not produce an object file"
             )
         os.replace(temporary_object, output)
+    return output
+
+
+def link_c99_executable(
+    c_source: str,
+    output_path: str | os.PathLike[str],
+    *,
+    compiler: str | os.PathLike[str] | Sequence[str] | None = None,
+) -> Path:
+    """Compile and link one C99 translation unit as a host executable."""
+    command_prefix = _resolve_compiler(compiler)
+    output = Path(output_path).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(
+        prefix=".aether-c99-",
+        dir=output.parent,
+    ) as temporary_directory:
+        temporary = Path(temporary_directory)
+        source_file = temporary / "module.c"
+        temporary_executable = temporary / (
+            "module.exe" if os.name == "nt" else "module"
+        )
+        source_file.write_text(c_source, encoding="utf-8", newline="\n")
+        command = (
+            *command_prefix,
+            *_C99_LINK_FLAGS,
+            str(source_file),
+            "-o",
+            str(temporary_executable),
+        )
+        try:
+            result = subprocess.run(
+                command,
+                cwd=temporary,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_COMPILER_TIMEOUT_SECONDS,
+            )
+        except FileNotFoundError as error:
+            raise C99ToolchainError(
+                f"Unable to start C99 compiler {command_prefix[0]!r}: {error}"
+            ) from error
+        except subprocess.TimeoutExpired as error:
+            stdout = (
+                error.stdout.decode(errors="replace")
+                if isinstance(error.stdout, bytes)
+                else error.stdout or ""
+            )
+            stderr = (
+                error.stderr.decode(errors="replace")
+                if isinstance(error.stderr, bytes)
+                else error.stderr or ""
+            )
+            raise C99BuildError(
+                command,
+                -1,
+                stdout,
+                stderr or "Compiler/linker timed out",
+            ) from error
+
+        if result.returncode != 0:
+            raise C99BuildError(
+                command,
+                result.returncode,
+                result.stdout,
+                result.stderr,
+            )
+        if not temporary_executable.is_file():
+            raise C99ToolchainError(
+                "C compiler reported success but did not produce an executable"
+            )
+        os.replace(temporary_executable, output)
     return output

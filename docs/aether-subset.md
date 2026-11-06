@@ -226,7 +226,7 @@ subcommand) is installed. CI sets
 `AETHER_REQUIRE_C99_COMPILER=1`, making a missing compiler a test failure
 instead of a skip.
 
-## Host C99 object build
+## Host C99 object and executable builds
 
 `build_object(source, output_path, compiler=None)` in `src.api` runs the host
 C compiler on the generated translation unit and writes an object file. The
@@ -235,9 +235,16 @@ may select a compiler explicitly, including a command sequence such as
 `("zig", "cc")`. Compiler arguments are passed without a shell. The driver
 uses strict C99 warnings-as-errors and compile-only mode, captures diagnostics,
 and replaces the requested output atomically only after successful compilation.
-It does not link an executable, select a cross-compilation target, load FFI
-libraries, or execute the result. The host compiler and its target ABI define
-the object format.
+It does not select a cross-compilation target or load FFI libraries.
+
+`build_executable(source, output_path, compiler=None)` compiles and links a
+host executable. Executable source must define an effect-free `fn main() -> i32`
+or `fn main() -> void` with no parameters. The backend adds the standard C
+`int main(void)` wrapper; an Aether `i32` result becomes the process exit code,
+while a `void` result becomes exit code zero. This initial linker accepts no
+extra libraries or linker options and does not load FFI declarations. It does
+not execute the resulting program. The host compiler and its target ABI define
+the executable format.
 
 ## Result handling v0.2
 

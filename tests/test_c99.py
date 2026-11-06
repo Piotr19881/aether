@@ -6,9 +6,18 @@ import tempfile
 import unittest
 import uuid
 
-from src.api import CompilationError, build_object, emit_c99, run_source
-from src.build import C99BuildError, C99ToolchainError
-from src.build import compile_c99_object
+from src.api import (
+    CompilationError,
+    build_executable,
+    build_object,
+    emit_c99,
+    run_source,
+)
+from src.build import (
+    C99BuildError,
+    C99ToolchainError,
+    compile_c99_object,
+)
 
 
 _STRICT_C99_FLAGS = ("-std=c99", "-pedantic", "-Wall", "-Wextra", "-Werror")
@@ -154,6 +163,67 @@ class C99BackendTests(unittest.TestCase):
                     "int value(void) { return 1; }\n",
                     Path(temporary_directory) / "module.o",
                     compiler=("aether-missing-c-compiler",),
+                )
+
+    def test_build_executable_runs_i32_entry_point(self) -> None:
+        compiler = self.compiler()
+        source = "fn main() -> i32 { return 23; }\n"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_path = Path(temporary_directory) / "aether-program.exe"
+            executable = build_executable(
+                source,
+                output_path,
+                compiler=compiler,
+            )
+            result = subprocess.run(
+                [str(executable)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+        self.assertEqual(result.returncode, run_source(source, "main"))
+
+    def test_build_executable_runs_void_entry_point_as_success(self) -> None:
+        compiler = self.compiler()
+        source = "fn main() -> void { return; }\n"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            executable = build_executable(
+                source,
+                Path(temporary_directory) / "aether-program.exe",
+                compiler=compiler,
+            )
+            result = subprocess.run(
+                [str(executable)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+        self.assertEqual(result.returncode, 0)
+
+    def test_build_executable_rejects_missing_or_invalid_entry_point(self) -> None:
+        cases = (
+            ("fn helper() -> i32 { return 0; }\n", "E_C99_ENTRY_POINT"),
+            (
+                "fn main(value: i32) -> i32 { return value; }\n",
+                "E_C99_ENTRY_POINT",
+            ),
+            ("fn main() -> f32 { return 0.0; }\n", "E_C99_ENTRY_POINT"),
+        )
+        for source, expected_code in cases:
+            with self.subTest(expected_code=expected_code):
+                with self.assertRaises(CompilationError) as raised:
+                    _ = build_executable(
+                        source,
+                        Path("unused.exe"),
+                        compiler=("aether-missing-c-compiler",),
+                    )
+                self.assertIn(
+                    expected_code,
+                    {item.code for item in raised.exception.diagnostics},
                 )
 
     def test_emits_deterministic_c99_with_checked_integer_arithmetic(self) -> None:

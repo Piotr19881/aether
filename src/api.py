@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from src.build import compile_c99_object
+from src.build import compile_c99_object, link_c99_executable
 from src.c99 import C99LoweringError, emit_c99_module
 from src.frontend import Diagnostic, SourceSpan, parse_source
 from src.interpreter import (
@@ -64,6 +64,14 @@ def emit_c99(source: str) -> str:
         raise CompilationError(error.diagnostics) from error
 
 
+def _emit_c99_executable_source(source: str) -> str:
+    module = compile_source(source)
+    try:
+        return emit_c99_module(module, include_entry_point=True)
+    except C99LoweringError as error:
+        raise CompilationError(error.diagnostics) from error
+
+
 def build_object(
     source: str,
     output_path: str | os.PathLike[str],
@@ -77,6 +85,21 @@ def build_object(
     """
     generated = emit_c99(source)
     return compile_c99_object(
+        generated,
+        output_path,
+        compiler=compiler,
+    )
+
+
+def build_executable(
+    source: str,
+    output_path: str | os.PathLike[str],
+    *,
+    compiler: str | os.PathLike[str] | Sequence[str] | None = None,
+) -> Path:
+    """Build a host executable from source containing fn main() -> i32 or void."""
+    generated = _emit_c99_executable_source(source)
+    return link_c99_executable(
         generated,
         output_path,
         compiler=compiler,
