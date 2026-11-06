@@ -1,0 +1,12 @@
+@map1
+F normalize_voltage (frame:SensorFrame)->Tensor<f32,[4,4]> @io
+T SensorFrame {samples:Tensor<f32,[4,4],V>,timestamp:u64} u:V
+X max_abs
+X mean
+X scale
+X subtract
+C normalize_voltage>max_abs
+C normalize_voltage>mean
+C normalize_voltage>scale
+C normalize_voltage>subtract
+R normalize_voltage>SensorFrame

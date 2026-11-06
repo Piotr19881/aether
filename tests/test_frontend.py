@@ -1,0 +1,212 @@
+from pathlib import Path
+import random
+import unittest
+
+from src.ai_view import generate_ai_view
+from src.codemap import build_codemap, render_map
+from src.frontend import (
+    FunctionDecl,
+    LetStmt,
+    ReturnStmt,
+    TypeDecl,
+    parse_source,
+    render_module,
+)
+from src.parser import parse_tokens, render, tokenize
+
+
+ROOT = Path(__file__).parents[1]
+
+
+class FrontendTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        with (ROOT / "examples" / "sensor.hl").open(
+            "r", encoding="utf-8", newline=""
+        ) as source_file:
+            cls.source = source_file.read()
+
+    def test_sample_produces_clean_ast_and_syntax_cst(self) -> None:
+        result = parse_source(self.source)
+
+        self.assertEqual(result.diagnostics, ())
+        self.assertIsInstance(result.ast.declarations[0], TypeDecl)
+        function = result.ast.declarations[1]
+        self.assertIsInstance(function, FunctionDecl)
+        self.assertEqual(function.attributes[0].name, "io")
+        self.assertIsInstance(function.body[0], LetStmt)
+        self.assertIsInstance(function.body[1], ReturnStmt)
+        self.assertEqual(render(result.cst), self.source)
+        self.assertTrue(any(node.kind == "type_declaration" for node in result.cst.children))
+        self.assertTrue(
+            any(node.kind == "function_declaration" for node in result.cst.children)
+        )
+
+    def test_parser_recovers_and_keeps_following_declarations(self) -> None:
+        source = "fn broken() { let = 1; }\nfn good() { return 1; }\n"
+        result = parse_source(source)
+
+        self.assertEqual(
+            [declaration.name for declaration in result.ast.declarations],
+            ["broken", "good"],
+        )
+        self.assertTrue(any(item.code == "E_SYNTAX" for item in result.diagnostics))
+        self.assertEqual(render(result.cst), source)
+
+    def test_semantic_diagnostics_report_duplicates_unknown_names_and_attributes(self) -> None:
+        source = (
+            "@mystery\n"
+            "fn f(value: i32, value: i32) {\n"
+            "  let result = missing(value, ghost);\n"
+            "}\n"
+            "fn f() {}\n"
+        )
+        result = parse_source(source)
+        codes = [item.code for item in result.diagnostics]
+
+        self.assertIn("E_UNKNOWN_ATTRIBUTE", codes)
+        self.assertIn("E_DUPLICATE_DECL", codes)
+        self.assertIn("E_DUPLICATE_BINDING", codes)
+        self.assertIn("E_UNKNOWN_CALL", codes)
+        self.assertIn("E_UNKNOWN_NAME", codes)
+        self.assertEqual(len([item for item in result.diagnostics if item.code == "E_UNKNOWN_CALL"]), 1)
+
+    def test_unknown_type_and_conflicting_effects_are_diagnosed(self) -> None:
+        result = parse_source("@pure\n@io\nfn f(value: Mystery) {}\n")
+        codes = [item.code for item in result.diagnostics]
+
+        self.assertIn("E_UNKNOWN_TYPE", codes)
+        self.assertIn("E_CONFLICTING_EFFECTS", codes)
+
+    def test_expression_precedence_and_pipeline_shape(self) -> None:
+        result = parse_source(
+            "fn f(a: i32, b: i32, c: i32) { return a |> scale(b * c + 1); }\n"
+        )
+        function = result.ast.declarations[0]
+        expression = function.body[0].value
+
+        self.assertEqual(expression.kind, "binary")
+        self.assertEqual(expression.value, "|>")
+        call = expression.children[1]
+        self.assertEqual(call.kind, "call")
+        addition = call.children[1]
+        self.assertEqual(addition.kind, "binary")
+        self.assertEqual(addition.value, "+")
+        self.assertEqual(addition.children[0].value, "*")
+        self.assertEqual(result.diagnostics, ())
+
+    def test_ast_rendering_is_parseable_and_view_generation_is_deterministic(self) -> None:
+        first = parse_source(self.source)
+        canonical = render_module(first.ast)
+        reparsed = parse_source(canonical)
+
+        self.assertEqual(reparsed.diagnostics, ())
+        self.assertEqual(
+            generate_ai_view(first.ast),
+            generate_ai_view(reparsed.ast),
+        )
+
+    def test_codemap_from_ast_uses_declarations_and_calls(self) -> None:
+        result = parse_source(self.source)
+        text = render_map(build_codemap(result.ast))
+
+        self.assertTrue(text.startswith("@map1\n"))
+        self.assertIn("F normalize_voltage (frame:SensorFrame)->Tensor<f32,[4,4]> @io", text)
+        self.assertIn("T SensorFrame", text)
+        self.assertIn("C normalize_voltage>max_abs", text)
+        self.assertIn("C normalize_voltage>mean", text)
+        self.assertIn("C normalize_voltage>scale", text)
+        self.assertIn("C normalize_voltage>subtract", text)
+        self.assertIn("R normalize_voltage>SensorFrame", text)
+
+    def test_codemap_marks_unannotated_functions_as_pure(self) -> None:
+        module = parse_source("fn identity(value: i32) { return value; }\n").ast
+        text = render_map(build_codemap(module))
+
+        self.assertIn("F identity (value:i32) @pure", text)
+
+    def test_crlf_source_roundtrips_without_newline_normalization(self) -> None:
+        source = "type T {\r\n    value: i32,\r\n}\r\n\r\nfn f() {}\r\n"
+        result = parse_source(source)
+
+        self.assertEqual(render(result.cst), source)
+        self.assertEqual(result.diagnostics, ())
+
+    def test_seeded_source_variants_roundtrip_losslessly(self) -> None:
+        generator = random.Random(20261106)
+        for index in range(40):
+            newline = generator.choice(("\n", "\r\n"))
+            name = f"sensor_{index}"
+            factor = generator.choice(("2.0", "0.5", "1.25"))
+            source = newline.join(
+                (
+                    f"// generated case {index}",
+                    f"fn {name}(input: f32) -> f32 {{",
+                    f"    let output = input |> scale({factor});",
+                    "    return output;",
+                    "}",
+                    "",
+                )
+            )
+            result = parse_source(source)
+
+            self.assertEqual(render(result.cst), source)
+            self.assertEqual(result.diagnostics, ())
+
+    def test_malformed_delimiters_are_recoverable_frontend_diagnostics(self) -> None:
+        result = parse_source("fn broken() { return (1; }\nfn good() {}\n")
+
+        self.assertTrue(any(item.code == "E_SYNTAX" for item in result.diagnostics))
+        self.assertIn("good", {item.name for item in result.ast.declarations})
+
+    def test_extern_c_declaration_roundtrips_through_ast(self) -> None:
+        source = (
+            '@ffi\n'
+            '@link("sensor")\n'
+            'extern "C" fn read_channel(channel: u32) -> i32;\n'
+            "@ffi\n"
+            '@link("sensor")\n'
+            'extern "C" fn reset() -> void;\n'
+        )
+        parsed = parse_source(source)
+
+        self.assertEqual(parsed.diagnostics, ())
+        first = parsed.ast.declarations[0]
+        self.assertEqual(first.external_abi, "C")
+        self.assertEqual(first.external_library, "sensor")
+        self.assertEqual(first.body, ())
+        canonical = render_module(parsed.ast)
+        reparsed = parse_source(canonical)
+        self.assertEqual(reparsed.diagnostics, ())
+        self.assertEqual(render_module(reparsed.ast), canonical)
+
+    def test_invalid_extern_syntax_is_rejected(self) -> None:
+        wrong_abi = parse_source(
+            '@ffi\n@link("sensor")\nextern "python" fn read() -> i32;\n'
+        )
+        missing_semicolon = parse_source(
+            '@ffi\n@link("sensor")\nextern "C" fn read() -> i32\n'
+        )
+
+        self.assertIn("E_SYNTAX", [item.code for item in wrong_abi.diagnostics])
+        self.assertIn("E_SYNTAX", [item.code for item in missing_semicolon.diagnostics])
+
+    def test_codemap_marks_extern_symbol_and_call_edge(self) -> None:
+        source = (
+            '@ffi\n@link("sensor")\nextern "C" fn read() -> i32;\n'
+            "@ffi\n"
+            "fn sample() -> i32 { return read(); }\n"
+        )
+        parsed = parse_source(source)
+        text = render_map(build_codemap(parsed.ast))
+        cst_text = render_map(build_codemap(parse_tokens(source, tokenize(source))))
+
+        self.assertEqual(parsed.diagnostics, ())
+        self.assertIn("X read", text)
+        self.assertIn("C sample>read", text)
+        self.assertIn("X read", cst_text)
+        self.assertIn("C sample>read", cst_text)
+
+
+if __name__ == "__main__":
+    unittest.main()

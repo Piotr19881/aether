@@ -1,0 +1,1 @@
+type SensorFrame{samples:Tensor<f32,[4,4],V>,timestamp:u64,}@io fn normalize_voltage(frame:SensorFrame)->Tensor<f32,[4,4]>{let centered=frame.samples|>subtract(mean(frame.samples));return centered|>scale(1.0/max_abs(centered));}

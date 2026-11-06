@@ -1,0 +1,81 @@
+"""Stable parse, compile, and execution entry points for the Aether prototype."""
+
+from __future__ import annotations
+
+from typing import Mapping
+
+from src.c99 import C99LoweringError, emit_c99_module
+from src.frontend import Diagnostic, SourceSpan, parse_source
+from src.interpreter import (
+    EffectHandler,
+    ExternalFunctionHandler,
+    Interpreter,
+)
+from src.ir import IRLoweringError, IRModule, lower_module
+from src.parser import ParseError
+
+
+class CompilationError(ValueError):
+    """Compilation stopped because parsing, analysis, or lowering failed."""
+
+    def __init__(self, diagnostics: tuple[Diagnostic, ...]) -> None:
+        self.diagnostics = diagnostics
+        summary = "; ".join(
+            f"{diagnostic.code}: {diagnostic.message}"
+            for diagnostic in diagnostics
+        )
+        super().__init__(summary or "Aether compilation failed")
+
+
+def compile_source(source: str) -> IRModule:
+    """Parse, analyze, and lower source, refusing all reported errors."""
+    try:
+        parsed = parse_source(source)
+    except ParseError as error:
+        diagnostic = Diagnostic(
+            "E_LEXICAL",
+            str(error),
+            SourceSpan(error.offset, error.offset, error.line, error.column),
+        )
+        raise CompilationError((diagnostic,)) from error
+
+    errors = tuple(
+        diagnostic
+        for diagnostic in parsed.diagnostics
+        if diagnostic.severity == "error"
+    )
+    if errors:
+        raise CompilationError(errors)
+    try:
+        return lower_module(parsed.ast)
+    except IRLoweringError as error:
+        raise CompilationError(error.diagnostics) from error
+
+
+def emit_c99(source: str) -> str:
+    """Compile source and emit C99 for the checked scalar backend subset."""
+    module = compile_source(source)
+    try:
+        return emit_c99_module(module)
+    except C99LoweringError as error:
+        raise CompilationError(error.diagnostics) from error
+
+
+def run_source(
+    source: str,
+    function_name: str,
+    *arguments: object,
+    effect_handlers: Mapping[str, EffectHandler] | None = None,
+    external_handlers: Mapping[str, ExternalFunctionHandler] | None = None,
+    max_call_depth: int = 128,
+    **keywords: object,
+) -> object:
+    """Compile source and invoke one function with explicit effect handlers."""
+    module = compile_source(source)
+    interpreter = Interpreter(
+        module,
+        effect_handlers=effect_handlers,
+        external_handlers=external_handlers,
+        max_call_depth=max_call_depth,
+    )
+    return interpreter.run(function_name, *arguments, **keywords)

@@ -1,0 +1,27 @@
+{
+  "name": "claude3-o200k-proxy",
+  "description": "Approximation only: o200k_base is not Claude's tokenizer. Supply a real Encoder for exact Claude measurements.",
+  "tokenizer": {
+    "backend": "tiktoken",
+    "name": "o200k_base"
+  },
+  "operators": {
+    "|>": ["≫", "⟫", "⊳"],
+    "?.": ["·", "⋅"],
+    "->": ["→", "⇒"]
+  },
+  "idioms": {
+    "return": ["ret", "rtn"],
+    "Tensor": ["Ten", "Tns"]
+  },
+  "semantic_aliases": {
+    "normalize_voltage": ["$1", "$2", "nv"],
+    "timestamp": ["$3", "$4", "ts"],
+    "centered": ["$5", "$6", "ctr"]
+  },
+  "alias_candidates": [
+    "$1", "$2", "$3", "$4", "$5", "$6", "$7", "$8", "$9",
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l",
+    "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"
+  ]
+}

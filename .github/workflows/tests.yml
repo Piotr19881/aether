@@ -1,0 +1,20 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python-and-c99:
+    runs-on: ubuntu-latest
+    env:
+      AETHER_REQUIRE_C99_COMPILER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Verify C compiler
+        run: cc --version
+      - name: Run test suite with required C99 compiler
+        run: python -m unittest discover -s tests -v
